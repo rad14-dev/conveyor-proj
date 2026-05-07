@@ -1,6 +1,8 @@
 import time
 import threading
 import win32gui
+import ctypes
+import tkinter as tk
 from pynput import keyboard, mouse
 import window_utils
 
@@ -17,6 +19,7 @@ class HyperscrollApp:
         self.window_widths = {}      
         self.running = True
         self.modifier_pressed = False
+        self.is_enabled = True
         
         # Animation & Snapping
         self.lerp_factor = 0.15
@@ -32,16 +35,16 @@ class HyperscrollApp:
         self.hot_zone_margin = 15 
 
     def get_width(self, hwnd):
-        # Always calculate percentage-based width to remain responsive to resolution changes
-        # If no custom width, default to 70% of CURRENT screen width
         return self.window_widths.get(hwnd, int(self.screen_w * 0.7))
 
     def refresh(self):
+        if not self.is_enabled: return
         self.managed_hwnds = window_utils.get_managed_windows()
         valid_hwnds = set(self.managed_hwnds)
         self.window_widths = {h: w for h, w in self.window_widths.items() if h in valid_hwnds}
 
     def apply_layout(self):
+        if not self.is_enabled: return
         cursor_x = -self.current_offset_x
         for hwnd in self.managed_hwnds:
             w = self.get_width(hwnd)
@@ -52,22 +55,19 @@ class HyperscrollApp:
                 
             draw_w = w - self.window_gap
             draw_x = cursor_x + (self.window_gap // 2)
-            # Re-scale height to current screen_h automatically
             window_utils.set_window_pos(hwnd, draw_x, 0, draw_w, self.screen_h)
             cursor_x += w
 
     def check_resolution(self):
-        """Detect changes in screen resolution or orientation."""
         new_w, new_h = window_utils.get_screen_size()
         if new_w != self.screen_w or new_h != self.screen_h:
             print(f"[Log] Display changed: {new_w}x{new_h}. Adapting layout...")
             self.screen_w = new_w
             self.screen_h = new_h
-            # We don't clear window_widths, but we should probably scale them 
-            # for now, apply_layout will handle the height automatically.
             self.apply_layout()
 
     def check_window_states(self):
+        if not self.is_enabled: return
         current_system_visible = window_utils.get_managed_windows()
         changed = False
         
@@ -115,15 +115,19 @@ class HyperscrollApp:
 
     def animation_loop(self):
         while self.running:
+            if not self.is_enabled:
+                time.sleep(0.5) # Sleep longer to save CPU when disabled
+                continue
+                
             now = time.time()
             self.handle_hot_zones()
             
-            # Check for resolution/orientation changes (every 1s)
-            if now - self.last_res_check > 1.0:
+            # Check for resolution/orientation changes (every 2s)
+            if now - self.last_res_check > 2.0:
                 self.check_resolution()
                 self.last_res_check = now
 
-            if now - self.last_state_check > 0.15:
+            if now - self.last_state_check > 0.3:
                 self.check_window_states()
                 self.last_state_check = now
 
@@ -146,7 +150,7 @@ class HyperscrollApp:
             time.sleep(0.01)
 
     def handle_hot_zones(self):
-        if not self.modifier_pressed: return
+        if not self.modifier_pressed or not self.is_enabled: return
         try:
             x, y = win32gui.GetCursorPos()
             active_hwnd = win32gui.GetForegroundWindow()
@@ -164,8 +168,34 @@ class HyperscrollApp:
                     self.apply_layout()
         except Exception: pass
 
+    # --- NATIVE SCROLL SUPPRESSION ---
+    def win32_event_filter(self, msg, data):
+        """Intercepts low-level mouse events before they reach the OS."""
+        if not self.is_enabled:
+            return True
+            
+        # 0x020A = WM_MOUSEWHEEL, 0x020E = WM_MOUSEHWHEEL
+        if (msg == 0x020A or msg == 0x020E) and self.modifier_pressed:
+            delta = ctypes.c_short(data.mouseData >> 16).value
+            dx = 0
+            dy = 0
+            if msg == 0x020A: 
+                dy = delta / 120.0
+            else: 
+                dx = delta / 120.0
+                
+            # Process our scroll logic directly
+            self.on_scroll(data.pt.x, data.pt.y, dx, dy)
+            
+            # SUPPRESS EVENT from reaching underlying windows!
+            if hasattr(self.m_listener, 'suppress_event'):
+                self.m_listener.suppress_event()
+            return False 
+            
+        return True
+
     def on_scroll(self, x, y, dx, dy):
-        if self.modifier_pressed:
+        if self.modifier_pressed and self.is_enabled:
             self.last_input_time = time.time()
             norm_dx = dx * 0.1
             norm_dy = dy * 1.0
@@ -174,6 +204,7 @@ class HyperscrollApp:
             self.target_offset_x -= (move_delta * 300 * self.scroll_sensitivity)
 
     def on_press(self, key):
+        if not self.is_enabled: return
         self.last_input_time = time.time()
         if key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
             self.modifier_pressed = True
@@ -190,14 +221,14 @@ class HyperscrollApp:
                     elif key.char == '3': 
                         self.window_widths[active_hwnd] = int(self.screen_w * 0.75)
                         self.apply_layout()
+                    elif key.char == '4': 
+                        self.window_widths[active_hwnd] = int(self.screen_w * 1.0)
+                        self.apply_layout()
 
             if key == keyboard.Key.right:
                 self.target_offset_x += 400
             elif key == keyboard.Key.left:
                 self.target_offset_x -= 400
-            elif key == keyboard.Key.esc:
-                self.running = False
-                return False 
         except Exception: pass
 
     def on_release(self, key):
@@ -205,16 +236,62 @@ class HyperscrollApp:
             self.modifier_pressed = False
             self.last_input_time = time.time() - self.snap_delay + 0.1
 
+    # --- GUI CONTROL PANEL ---
+    def gui_toggle_changed(self):
+        self.is_enabled = self.toggle_var.get()
+        if self.is_enabled:
+            print("[GUI] Hyperscrolling Enabled")
+            self.refresh()
+            self.apply_layout()
+        else:
+            print("[GUI] Hyperscrolling Disabled")
+            
+    def gui_gap_changed(self, val):
+        self.window_gap = int(val)
+        if self.is_enabled:
+            self.apply_layout()
+
+    def on_gui_close(self):
+        print("[Log] Closing Conveyor...")
+        self.running = False
+        self.root.destroy()
+        if hasattr(self, 'm_listener'): self.m_listener.stop()
+        if hasattr(self, 'k_listener'): self.k_listener.stop()
+
+    def start_gui(self):
+        self.root = tk.Tk()
+        self.root.title("Conveyor Settings")
+        self.root.geometry("300x150")
+        self.root.attributes("-topmost", True)
+        self.root.resizable(False, False)
+        
+        self.toggle_var = tk.BooleanVar(value=self.is_enabled)
+        cb = tk.Checkbutton(self.root, text="Enable Hyperscrolling", variable=self.toggle_var, command=self.gui_toggle_changed, font=("Segoe UI", 10, "bold"))
+        cb.pack(pady=15)
+        
+        tk.Label(self.root, text="Window Gap (px):", font=("Segoe UI", 9)).pack()
+        self.gap_slider = tk.Scale(self.root, from_=0, to=50, orient=tk.HORIZONTAL, command=self.gui_gap_changed)
+        self.gap_slider.set(self.window_gap)
+        self.gap_slider.pack(fill='x', padx=30)
+        
+        self.root.protocol("WM_DELETE_WINDOW", self.on_gui_close)
+        self.root.mainloop()
+
     def start(self):
-        print("--- Hyperscroll Fase 4: Responsive Layout ---")
-        print("Feature: Automatically adapts to resolution and orientation changes.")
+        print("--- Project Conveyor: Phase 5 Native ---")
         self.refresh()
         self.apply_layout()
+        
         threading.Thread(target=self.animation_loop, daemon=True).start()
-        with mouse.Listener(on_scroll=self.on_scroll) as m_listener:
-            with keyboard.Listener(on_press=self.on_press, on_release=self.on_release) as k_listener:
-                k_listener.join()
-            m_listener.stop()
+        
+        self.m_listener = mouse.Listener(win32_event_filter=self.win32_event_filter, on_scroll=self.on_scroll)
+        self.m_listener.start()
+        
+        self.k_listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
+        self.k_listener.start()
+        
+        # Start GUI in main thread
+        self.start_gui()
 
 if __name__ == "__main__":
     app = HyperscrollApp()

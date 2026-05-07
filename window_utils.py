@@ -9,6 +9,17 @@ try:
 except Exception:
     ctypes.windll.user32.SetProcessDPIAware()
 
+DWMWA_CLOAKED = 14
+DwmGetWindowAttribute = ctypes.windll.dwmapi.DwmGetWindowAttribute
+
+def is_cloaked(hwnd):
+    """Checks if a window is 'cloaked', meaning it's on another Virtual Desktop or hidden by Windows."""
+    is_cloaked_val = ctypes.c_int(0)
+    res = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, ctypes.byref(is_cloaked_val), ctypes.sizeof(is_cloaked_val))
+    if res == 0:
+        return is_cloaked_val.value != 0
+    return False
+
 def get_screen_size():
     monitor = get_monitors()[0]
     return monitor.width, monitor.height
@@ -16,6 +27,15 @@ def get_screen_size():
 def is_real_window(hwnd):
     """Filter to ensure it's an application window, including UWP (Settings, etc)."""
     if not win32gui.IsWindowVisible(hwnd):
+        return False
+        
+    # Skip windows on other virtual desktops!
+    if is_cloaked(hwnd):
+        return False
+        
+    # Skip tooltips, overlays, and floating palettes
+    ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+    if ex_style & win32con.WS_EX_TOOLWINDOW:
         return False
         
     title = win32gui.GetWindowText(hwnd)
@@ -35,7 +55,7 @@ def is_real_window(hwnd):
     if clsname in blocked_classes:
         return False
         
-    blocked_titles = ['Start', 'Search', 'Program Manager', 'Task View']
+    blocked_titles = ['Start', 'Search', 'Program Manager', 'Task View', 'Conveyor Settings']
     if title in blocked_titles:
         return False
         
@@ -51,8 +71,6 @@ def get_managed_windows():
 
 def set_window_pos(hwnd, x, y, w, h):
     """Force window to specific coordinates with high priority."""
-    # SWP_SHOWWINDOW: Ensures the window is shown at the new position
-    # SWP_FRAMECHANGED: Forces the window to recalculate its non-client area
     win32gui.SetWindowPos(
         hwnd, 0, 
         int(x), int(y), int(w), int(h), 
