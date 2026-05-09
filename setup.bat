@@ -1,6 +1,6 @@
 @echo off
 echo [Hyperscroll] Installing dependencies...
-pip install pywin32 pynput screeninfo
+pip install pywin32 pynput screeninfo pystray Pillow
 echo [Hyperscroll] Setup complete.
 echo Run 'python main.py' to start the prototype.
 pause

@@ -15,22 +15,36 @@ class HyperscrollApp:
         self.wm = WindowManager(w, h)
         self.input = InputHandler(self)
         
-        # Physics & Animation State
+        # Animation & Bezier State
         self.current_offset_x = 0.0
         self.target_offset_x = 0.0
+        self.start_offset_x = 0.0
+        self.anim_progress = 1.0  # 1.0 means finished
+        self.anim_duration = 0.4  # Seconds
+        self.last_anim_time = time.time()
         
         self.is_enabled = True
-        self.is_recording = False # RESTORED: Required by input_handler.py
+        self.is_recording = False
         self.running = True
-        
-        self.lerp_factor = 0.15 
-        self.snap_delay = 0.20 
+        self.snap_delay = 0.1
         self.last_input_time = time.time()
-        self.is_moving = False
-        self.is_snapping = False
+        self.pending_sync = False
         
         self.last_config_mtime = os.path.getmtime(self.config.config_path)
         ctypes.windll.user32.SystemParametersInfoW(0x2001, 0, 0, 0x02)
+        
+        # Set up instant window detection hook
+        self.hook = window_utils.set_win_event_hook(self.on_window_event)
+
+    def ease_out_back(self, x):
+        """Bezier-like Ease Out Back formula for that smooth overshoot effect."""
+        c1 = 0.7  # Overshoot intensity (lower = smoother)
+        c3 = c1 + 1
+        return 1 + c3 * pow(x - 1, 3) + c1 * pow(x - 1, 2)
+
+    def on_window_event(self, hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime):
+        if idObject == 0: 
+            self.pending_sync = True
 
     def trigger_layout(self):
         if not self.is_enabled: return
@@ -44,7 +58,7 @@ class HyperscrollApp:
             mtime = os.path.getmtime(self.config.config_path)
             if mtime > self.last_config_mtime:
                 self.config.config = self.config.load_config()
-                self.config.modifier_key = self.config.get_modifier_key()
+                self.config.modifier_keys = self.config.get_modifier_keys()
                 self.wm.window_gap = self.config.config.get("window_gap", 5)
                 self.last_config_mtime = mtime
         except: pass
@@ -53,40 +67,47 @@ class HyperscrollApp:
         last_state_check = time.time()
         while self.running:
             if not self.is_enabled:
-                time.sleep(0.5); continue
+                time.sleep(1.0); continue
             
             now = time.time()
-            if now - last_state_check > 0.8:
-                if self.wm.sync_states():
+            dt = now - self.last_anim_time
+            self.last_anim_time = now
+            
+            if self.pending_sync or (now - last_state_check > 2.0):
+                floating_classes = self.config.config.get("floating_classes", [])
+                if self.wm.sync_states(floating_classes):
                     self.trigger_layout()
                 self.check_config_reload()
+                self.pending_sync = False
                 last_state_check = now
 
-            diff = self.target_offset_x - self.current_offset_x
-            if abs(diff) > 0.1:
-                self.is_moving = True
-                current_lerp = self.lerp_factor
-                if abs(diff) < 50: current_lerp *= 0.8
-                self.current_offset_x += diff * current_lerp
-                self.trigger_layout()
-                sleep_time = 0.008 
-            else:
-                if self.is_moving:
-                    self.current_offset_x = self.target_offset_x
-                    self.trigger_layout()
-                    if not self.input.modifier_pressed:
-                        self.focus_central_window()
-                    self.is_moving = False
-                    self.is_snapping = False
+            # Check for target change
+            if hasattr(self, '_prev_target') and self._prev_target != self.target_offset_x:
+                self.start_offset_x = self.current_offset_x
+                self.anim_progress = 0.0
+            self._prev_target = self.target_offset_x
+
+            # --- BEZIER ANIMATION PROGRESS ---
+            if self.anim_progress < 1.0:
+                self.anim_progress += dt / self.anim_duration
+                if self.anim_progress > 1.0: self.anim_progress = 1.0
                 
-                if not self.input.modifier_pressed and not self.is_snapping:
+                # Apply Ease Out Back
+                eased_t = self.ease_out_back(self.anim_progress)
+                self.current_offset_x = self.start_offset_x + (self.target_offset_x - self.start_offset_x) * eased_t
+                
+                self.trigger_layout()
+                sleep_time = 0.007 # High refresh for smoothness
+            else:
+                # Idle state / Snapping logic
+                if not self.input.are_modifiers_active():
                     if now - self.last_input_time > self.snap_delay:
                         snap_target = self.get_snap_target()
                         if abs(self.target_offset_x - snap_target) > 1.0:
                             self.target_offset_x = snap_target
-                            self.is_snapping = True
+                            # Focus transition would happen here after snap
                 
-                sleep_time = 0.05
+                sleep_time = 0.01 if self.input.are_modifiers_active() else 0.05
 
             time.sleep(sleep_time)
 
@@ -122,16 +143,63 @@ class HyperscrollApp:
 
     def start(self):
         self.wm.window_gap = self.config.config.get("window_gap", 5)
-        self.wm.refresh_list(); self.trigger_layout()
+        floating_classes = self.config.config.get("floating_classes", [])
+        self.wm.refresh_list(floating_classes); self.trigger_layout()
         threading.Thread(target=self.animation_loop, daemon=True).start()
         self.input.start()
         
         root = tk.Tk(); root.title("Conveyor Runner")
-        root.geometry("220x80"); root.attributes("-topmost", True)
-        tk.Label(root, text="Conveyor is Active", font=("Segoe UI", 10, "bold")).pack(pady=5)
-        tk.Label(root, text="Mod: Alt | Edit config live", font=("Segoe UI", 8)).pack()
-        root.protocol("WM_DELETE_WINDOW", lambda: os._exit(0))
+        root.geometry("240x80"); root.attributes("-topmost", True)
+        tk.Label(root, text="Conveyor is Active", font=("Segoe UI", 10, "bold"), fg="#0078d7").pack(pady=2)
+        
+        self.count_var = tk.StringVar(value="Detected: 0 windows")
+        tk.Label(root, textvariable=self.count_var, font=("Segoe UI", 9)).pack()
+        
+        tk.Label(root, text="Alt + 1-4: Resize | Alt + Q: Refresh", font=("Segoe UI", 8), fg="#666666").pack(pady=1)
+        root.protocol("WM_DELETE_WINDOW", lambda: self.hide_to_tray(root))
+        
+        def update_ui_info():
+            if self.running:
+                count = len(self.wm.managed_hwnds)
+                self.count_var.set(f"Detected: {count} windows")
+                root.after(1000, update_ui_info)
+        
+        update_ui_info()
+        
+        # root.after(3000, lambda: self.hide_to_tray(root))
+        
+        # Start Tray in background
+        threading.Thread(target=self.setup_tray, args=(root,), daemon=True).start()
+        
         root.mainloop()
+
+    def hide_to_tray(self, root):
+        root.withdraw()
+
+    def setup_tray(self, root):
+        from PIL import Image, ImageDraw
+        import pystray
+        
+        def create_image():
+            width = 64; height = 64
+            image = Image.new('RGB', (width, height), (30, 30, 30))
+            dc = ImageDraw.Draw(image)
+            dc.ellipse([10, 10, 54, 54], fill=(0, 120, 215))
+            return image
+
+        def on_tray_click(icon, item):
+            if str(item) == "Show":
+                root.after(0, root.deiconify)
+            elif str(item) == "Exit":
+                icon.stop()
+                os._exit(0)
+
+        menu = pystray.Menu(
+            pystray.MenuItem("Show", on_tray_click),
+            pystray.MenuItem("Exit", on_tray_click)
+        )
+        icon = pystray.Icon("Conveyor", create_image(), "Project Conveyor", menu)
+        icon.run()
 
 if __name__ == "__main__":
     app = HyperscrollApp()

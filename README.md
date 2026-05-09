@@ -23,11 +23,13 @@ The primary goal of **Conveyor** is to provide a more natural, intuitive, and pr
 *   **Smooth Scrolling (Lerp)**: Fluid window movement using Linear Interpolation-based animations.
 *   **Natural Input Support**: 
     *   **Keyboard**: Navigation via arrow keys.
-    *   **Mouse/Trackpad**: Support for scroll wheel and two-finger swipe gestures (Trackpad) by holding the `Alt` modifier.
+    *   **Mouse/Trackpad**: Support for scroll wheel and two-finger swipe gestures (Trackpad) by holding the **`Win + Alt`** modifier.
 *   **Dynamic Tiling (Tiling Snapping)**: Instantly change the active window's width using presets:
-    *   `Alt + 1` : 25% Screen Width (Sidebar)
-    *   `Alt + 2` : 50% Screen Width (Split)
-    *   `Alt + 3` : 75% Screen Width (Focus)
+    *   `Win + Alt + 1` : 25% Screen Width (Sidebar)
+    *   `Win + Alt + 2` : 50% Screen Width (Split)
+    *   `Win + Alt + 3` : 75% Screen Width (Focus)
+    *   `Win + Alt + 4` : 100% Screen Width (Full)
+*   **Floating Windows**: Toggle any window to be independent of the tiling strip.
 *   **Auto-Snapping**: Windows automatically snap to the center of the screen when scrolling stops.
 *   **Smart Detection**: Automatically detects when windows are opened, closed, minimized, or restored from the Taskbar.
 *   **Responsive Layout**: Automatically adapts the layout when monitor resolution or orientation changes.
@@ -51,8 +53,9 @@ This project is designed to be tested safely within **Windows Sandbox**.
 4.  Open several applications (e.g., 3-4 instances of Notepad).
 5.  Run the command: `python main.py`
 6.  **Controls:**
-    *   Hold `Alt` + Scroll Mouse/Swipe Trackpad to slide the conveyor.
-    *   Hold `Alt` + 1/2/3 to resize the active window.
+    *   Hold **`Win + Alt`** + Scroll Mouse/Swipe Trackpad to slide the conveyor.
+    *   Hold **`Win + Alt`** + 1/2/3/4 to resize the active window.
+    *   Press **`Win + Alt + V`** to toggle the active window as **Floating**.
     *   Press `Esc` to exit.
 
 ---

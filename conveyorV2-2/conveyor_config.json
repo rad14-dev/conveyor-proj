@@ -1,0 +1,15 @@
+{
+    "modifier": "alt_l",
+    "window_gap": 5,
+    "shortcuts": {
+        "swap_left": ",",
+        "swap_right": ".",
+        "resize_1": "1",
+        "resize_2": "2",
+        "resize_3": "3",
+        "resize_4": "4",
+        "toggle_floating": "v",
+        "nav_left": "n",
+        "nav_right": "m"
+    }
+}
