@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Local config & logs
+conveyor_config.json
+*.log
+
+# Checkpoints
+checkpoint_*/
+Conveyor_v*/
